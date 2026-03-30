@@ -49,21 +49,26 @@ public void Main(string argument, UpdateType updateSource)
     List<IMyRemoteControl> remotes = new List<IMyRemoteControl>();
     GridTerminalSystem.GetBlocksOfType(remotes, r => r.CustomName.Contains("ANOOK-Ca Remote Control"));
     remote = remotes.Count > 0 ? remotes[0] : null;
-    string currentZone = remote != null ? GetAsteroidZone(remote.GetPosition()) : "Unknown";
-    asteroidDatabases.Clear();
-    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b =>
-        b.CustomName.StartsWith("ANOOK-Ca " + currentZone + " A-DB HD"));
-    outputLCDs.Clear();
-    GridTerminalSystem.GetBlocksOfType(outputLCDs, l => l.CustomName.StartsWith(LCD_TAG));
-    outputLCDs.Sort((a, b) => a.CustomName.CompareTo(b.CustomName));
     List<IMyTimerBlock> fieldBlocks = new List<IMyTimerBlock>();
     GridTerminalSystem.GetBlocksOfType(fieldBlocks, b => b.CustomName.IndexOf(FIELD_DB_NAME, StringComparison.OrdinalIgnoreCase) >= 0);
     fieldDatabase = fieldBlocks.Count > 0 ? fieldBlocks[0] : null;
-
+    string currentZone = (remote != null && fieldDatabase != null) ? GetAsteroidZone(remote.GetPosition()) : "Unknown";
+    asteroidDatabases.Clear();
+    string zoneDbPrefix = "ANOOK-Ca " + currentZone + " A-DB HD";
+    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b => b.CustomName.StartsWith(zoneDbPrefix, StringComparison.OrdinalIgnoreCase));
+    outputLCDs.Clear();
+    GridTerminalSystem.GetBlocksOfType(outputLCDs, l => l.CustomName.StartsWith(LCD_TAG));
+    outputLCDs.Sort((a, b) => a.CustomName.CompareTo(b.CustomName));
     // --- SAFETY CHECKS ---
     if (remote == null) { Echo("ANOOK-Ca Remote Control not found"); return; }
     if (fieldDatabase == null) { Echo("Field database block not found."); return; }
-    if (asteroidDatabases.Count == 0) { Echo("No asteroid database blocks found for zone: " + currentZone); return; }
+    if (asteroidDatabases.Count == 0)
+    {
+        Echo("No asteroid database blocks found for current zone.");
+        Echo("Expected zone prefix: " + zoneDbPrefix);
+        Echo("Zone-specific naming is required.");
+        return;
+    }
 
     if (argument == null) argument = "";
     argument = argument.Trim();
