@@ -1,11 +1,29 @@
-const string LCD_PATH_NAME = "ANOUK-PF LCD 1"; 
-const string LCD_CONFIRM_NAME = "ANOUK-PF LCD 2"; 
-const string INDICATOR_NAME = "ANOUK-PF Indicator Light"; 
-const string SOUND_BLOCK_NAME = "ANOUK-PF Sound Block"; 
-const string SENSOR_TAG = "ANOUK-PF Sensor"; // Ensure your sensor has this name
-const string PATHFINDER_CHANNEL = "ANOUK-Ca_PathFinder_Channel"; 
-const string REMOTE_TAG = "ANOUK-PF Remote Control"; 
+const string LCD_PATH_NAME = "ANOOK-PF LCD 1"; 
+const string LCD_CONFIRM_NAME = "ANOOK-PF LCD 2"; 
+const string INDICATOR_NAME = "ANOOK-PF Indicator Light"; 
+const string SOUND_BLOCK_NAME = "ANOOK-PF Sound Block"; 
+const string SENSOR_TAG = "ANOOK-PF Sensor"; // Ensure your sensor has this name
+const string PATHFINDER_CHANNEL = "ANOOK-Ca_PathFinder_Channel"; 
+const string REMOTE_TAG = "ANOOK-PF Remote Control"; 
 const double CLOSE_ENOUGH_DEFAULT = 1.0; 
+const string MSG_CONFIRMED_ENTRY = "Confirmed_Entry|";
+const string MSG_PATH = "Path|";
+const string MSG_PATHFINDER_MAX_SPEED = "PathfinderMaxSpeed|";
+
+const string CMD_SETUP_COMPLETE = "PF_ExcavationSiteSetUpComplete";
+const string CMD_PATH_ADD = "PF_ExcavationSitePathAdd";
+const string CMD_STAGGER = "PF_ExcavationSiteStagger";
+const string CMD_CANCEL = "PF_ExcavationSiteCancel";
+const string CMD_RETURN_REQUEST = "PF_ReturnRequest";
+const string CMD_MAX_SPEED_REQUEST = "PF_MaxSpeedRequest";
+const string CMD_START_RECORDING = "PF_ExcavationSitePathStartRecording";
+const string CMD_STOP_RECORDING = "PF_ExcavationSitePathStopRecording";
+
+const string OUT_PATH_ADD = "ExcavationSitePathAdd";
+const string OUT_STAGGER = "ExcavationSiteStagger";
+const string OUT_CANCEL = "ExcavationSiteCancel";
+const string OUT_RETURN_REQUEST = "PathfinderReturnRequest";
+const string OUT_MAX_SPEED_REQUEST = "PathfinderMaxSpeedRequest";
 
 // PID TUNING FOR STABILITY
 const double gyroP = 0.5; const double gyroI = 0.002; const double gyroD = 0.5; const double gyroMax = 2;
@@ -46,7 +64,10 @@ public void Main(string argument, UpdateType updateSource) {
     lcdConfirm = GridTerminalSystem.GetBlockWithName(LCD_CONFIRM_NAME) as IMyTextPanel; 
     indicatorLight = GridTerminalSystem.GetBlockWithName(INDICATOR_NAME) as IMyLightingBlock; 
     remote = GridTerminalSystem.GetBlockWithName(REMOTE_TAG) as IMyRemoteControl; 
-    sensor = GridTerminalSystem.GetBlockWithName(SENSOR_TAG) as IMySensorBlock; // Initialize sensor
+    // Initialize sensor by tag match (supports numbered/variant sensor names)
+    var sensors = new List<IMySensorBlock>();
+    GridTerminalSystem.GetBlocksOfType(sensors, s => s.CustomName.IndexOf(SENSOR_TAG, StringComparison.OrdinalIgnoreCase) >= 0);
+    sensor = sensors.Count > 0 ? sensors[0] : null;
     soundBlock = GridTerminalSystem.GetBlockWithName(SOUND_BLOCK_NAME) as IMySoundBlock; 
 
     if (remote != null && gyroControl == null) {
@@ -61,7 +82,7 @@ public void Main(string argument, UpdateType updateSource) {
     bool isSendCommand = false; 
 
     // --- NEW 3-STEP SETUP WITH SENSOR VISUALS ---
-    if (cmd.Equals("PF_ExcavationSiteSetUpComplete", StringComparison.OrdinalIgnoreCase)) {
+    if (cmd.Equals(CMD_SETUP_COMPLETE, StringComparison.OrdinalIgnoreCase)) {
         if (remote == null) return;
         setupStep++;
         if (setupStep == 1) {
@@ -89,28 +110,28 @@ public void Main(string argument, UpdateType updateSource) {
     }
 
     // --- STANDARD COMMANDS --- 
-    else if (cmd.Equals("PF_ExcavationSitePathAdd", StringComparison.OrdinalIgnoreCase)) { commandPrefix = "ExcavationSitePathAdd"; isSendCommand = true; } 
-    else if (cmd.Equals("PF_ExcavationSiteStagger", StringComparison.OrdinalIgnoreCase)) { 
-        commandPrefix = "ExcavationSiteStagger"; isSendCommand = true; 
+    else if (cmd.Equals(CMD_PATH_ADD, StringComparison.OrdinalIgnoreCase)) { commandPrefix = OUT_PATH_ADD; isSendCommand = true; } 
+    else if (cmd.Equals(CMD_STAGGER, StringComparison.OrdinalIgnoreCase)) { 
+        commandPrefix = OUT_STAGGER; isSendCommand = true; 
         if (recordingActive) StopRecordingMode(); 
         ConfigureSensorVisuals(true); // Turn on visuals for stagger alignment
     } 
-    else if (cmd.Equals("PF_ExcavationSiteCancel", StringComparison.OrdinalIgnoreCase)) { 
-        commandPrefix = "ExcavationSiteCancel"; isSendCommand = true; 
+    else if (cmd.Equals(CMD_CANCEL, StringComparison.OrdinalIgnoreCase)) { 
+        commandPrefix = OUT_CANCEL; isSendCommand = true; 
         if (recordingActive) StopRecordingMode();
         isSoftLocked = false; setupStep = 0; 
         ConfigureSensorVisuals(false); // Clean up visuals
         StopOverrides();
     } 
-    else if (cmd.Equals("PF_ReturnRequest", StringComparison.OrdinalIgnoreCase)) { commandPrefix = "PathfinderReturnRequest"; isSendCommand = true; } 
-    else if (cmd.Equals("PF_MaxSpeedRequest", StringComparison.OrdinalIgnoreCase)) { commandPrefix = "PathfinderMaxSpeedRequest"; isSendCommand = true; } 
-    else if (cmd.Equals("PF_ExcavationSitePathStartRecording", StringComparison.OrdinalIgnoreCase)) { StartRecordingMode(); } 
-    else if (cmd.Equals("PF_ExcavationSitePathStopRecording", StringComparison.OrdinalIgnoreCase)) { StopRecordingMode(); } 
+    else if (cmd.Equals(CMD_RETURN_REQUEST, StringComparison.OrdinalIgnoreCase)) { commandPrefix = OUT_RETURN_REQUEST; isSendCommand = true; } 
+    else if (cmd.Equals(CMD_MAX_SPEED_REQUEST, StringComparison.OrdinalIgnoreCase)) { commandPrefix = OUT_MAX_SPEED_REQUEST; isSendCommand = true; } 
+    else if (cmd.Equals(CMD_START_RECORDING, StringComparison.OrdinalIgnoreCase)) { StartRecordingMode(); } 
+    else if (cmd.Equals(CMD_STOP_RECORDING, StringComparison.OrdinalIgnoreCase)) { StopRecordingMode(); } 
 
     // --- SEND COMMAND --- 
     if (isSendCommand) { 
         string msg; 
-        if (commandPrefix == "ExcavationSitePathAdd" || commandPrefix == "ExcavationSiteStagger") { 
+        if (commandPrefix == OUT_PATH_ADD || commandPrefix == OUT_STAGGER) { 
             if (remote == null) { Echo("No remote found!"); return; } 
             var pos = remote.GetPosition(); 
             string gps = $"GPS:Site:{pos.X:F2}:{pos.Y:F2}:{pos.Z:F2}:"; 
@@ -124,12 +145,13 @@ public void Main(string argument, UpdateType updateSource) {
     // --- IGC LISTENING --- 
     var listeners = new List<IMyBroadcastListener>(); IGC.GetBroadcastListeners(listeners); 
     foreach (var listener in listeners) { 
+        if (listener.Tag != PATHFINDER_CHANNEL) continue;
         while (listener.HasPendingMessage) { 
             var m = listener.AcceptMessage(); string str = m.Data as string; 
             if (str != null) { 
-                if (str.StartsWith("Confirmed_Entry|")) HandleConfirmedEntry(str); 
-                else if (str.StartsWith("Path|")) HandlePathMessage(str); 
-                else if (str.StartsWith("PathfinderMaxSpeed|")) HandleMaxSpeed(str); 
+                if (str.StartsWith(MSG_CONFIRMED_ENTRY)) HandleConfirmedEntry(str); 
+                else if (str.StartsWith(MSG_PATH)) HandlePathMessage(str); 
+                else if (str.StartsWith(MSG_PATHFINDER_MAX_SPEED)) HandleMaxSpeed(str); 
             } 
         } 
     } 
@@ -197,7 +219,7 @@ void SendPFExcavationSitePathAdd() {
     string gps = $"GPS:Site:{remote.GetPosition().X:F2}:{remote.GetPosition().Y:F2}:{remote.GetPosition().Z:F2}:"; 
     double yaw, pitch, roll; GetRotationAngles(remote.WorldMatrix.Forward, remote.WorldMatrix.Up, out yaw, out pitch, out roll); 
     string orient = $"{yaw:F2},{pitch:F2},{roll:F2}"; 
-    string msg = $"ExcavationSitePathAdd|{gps}|{orient}"; 
+    string msg = $"{OUT_PATH_ADD}|{gps}|{orient}"; 
     IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, msg); Echo($"[Recording] Sent: {msg}"); 
 } 
 
@@ -215,7 +237,7 @@ void HandlePathMessage(string msg) {
         double closeEnough = CLOSE_ENOUGH_DEFAULT; 
         if (idx < parts.Length && double.TryParse(parts[idx], out closeEnough)) { pathCloseEnoughs.Add(closeEnough); idx++; } else { pathCloseEnoughs.Add(CLOSE_ENOUGH_DEFAULT); } 
     } 
-    pathMaxSpeed = -1; IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, "PathfinderMaxSpeedRequest"); Echo("Path stored."); 
+    pathMaxSpeed = -1; IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, OUT_MAX_SPEED_REQUEST); Echo("Path stored."); 
 } 
 
 void OutputPathStatus() { 
