@@ -1,0 +1,242 @@
+// === ANOOK-Am (AutoMiner Prototype) ===
+// One command: Start Job
+// CustomData (INI expected):
+// [Job]
+// CornerA=GPS:CornerA:x:y:z:
+// CornerB=GPS:CornerB:x:y:z:
+// Stagger=GPS:Site:x:y:z:|yaw,pitch,roll
+// Depth=15
+// Overlap=1.0
+// Optional:
+// LaneWidth=5.0
+// CloseEnough=2.0
+
+const string CMD_START_JOB = "Start Job";
+const string SECTION_JOB = "Job";
+
+const double DEFAULT_DEPTH = 15.0;
+const double DEFAULT_OVERLAP = 1.0;
+const double DEFAULT_LANE_WIDTH = 5.0;
+const double DEFAULT_CLOSE_ENOUGH = 2.0;
+const double MIN_LANE_SPACING = 0.5;
+
+IMyRemoteControl remote;
+List<IMyShipDrill> drills = new List<IMyShipDrill>();
+
+bool jobActive = false;
+Vector3D lastWaypoint = Vector3D.Zero;
+double closeEnough = DEFAULT_CLOSE_ENOUGH;
+
+public Program()
+{
+    Runtime.UpdateFrequency = UpdateFrequency.Update10;
+}
+
+public void Main(string argument, UpdateType updateSource)
+{
+    remote = GridTerminalSystem.GetBlockWithName("ANOOK-PF Remote Control") as IMyRemoteControl;
+    GridTerminalSystem.GetBlocksOfType(drills);
+
+    string cmd = (argument ?? "").Trim();
+    if (cmd.Equals(CMD_START_JOB, StringComparison.Ordinal))
+    {
+        StartJob();
+        return;
+    }
+
+    if (jobActive && remote != null)
+    {
+        double d = Vector3D.Distance(remote.GetPosition(), lastWaypoint);
+        if (d <= closeEnough)
+        {
+            remote.SetAutoPilotEnabled(false);
+            SetDrills(false);
+            jobActive = false;
+            Echo("Job complete.");
+        }
+        else
+        {
+            Echo("Mining... Dist to end: " + d.ToString("0.0"));
+        }
+    }
+}
+
+void StartJob()
+{
+    if (remote == null)
+    {
+        Echo("Remote 'ANOOK-PF Remote Control' not found.");
+        return;
+    }
+
+    MyIni ini = new MyIni();
+    if (!ini.TryParse(Me.CustomData))
+    {
+        Echo("Invalid CustomData INI.");
+        return;
+    }
+
+    string cornerARaw = ini.Get(SECTION_JOB, "CornerA").ToString();
+    string cornerBRaw = ini.Get(SECTION_JOB, "CornerB").ToString();
+    string staggerRaw = ini.Get(SECTION_JOB, "Stagger").ToString();
+
+    Vector3D cornerA, cornerB, staggerPos;
+    if (!TryParseGPS(cornerARaw, out cornerA)) { Echo("Bad CornerA GPS."); return; }
+    if (!TryParseGPS(cornerBRaw, out cornerB)) { Echo("Bad CornerB GPS."); return; }
+    if (!TryParseStagger(staggerRaw, out staggerPos)) { Echo("Bad Stagger format."); return; }
+
+    double depth = ini.Get(SECTION_JOB, "Depth").ToDouble(DEFAULT_DEPTH);
+    double overlap = ini.Get(SECTION_JOB, "Overlap").ToDouble(DEFAULT_OVERLAP);
+    double laneWidth = ini.Get(SECTION_JOB, "LaneWidth").ToDouble(DEFAULT_LANE_WIDTH);
+    closeEnough = ini.Get(SECTION_JOB, "CloseEnough").ToDouble(DEFAULT_CLOSE_ENOUGH);
+
+    Vector3D orientForward, orientUp;
+    if (!TryGetStaggerOrientationVectors(staggerRaw, out orientForward, out orientUp))
+    {
+        orientForward = remote.WorldMatrix.Forward;
+        orientUp = remote.WorldMatrix.Up;
+    }
+
+    List<Vector3D> waypoints = BuildSerpentineWaypoints(cornerA, cornerB, orientUp, orientForward, depth, overlap, laneWidth);
+    if (waypoints.Count == 0)
+    {
+        Echo("No waypoints generated.");
+        return;
+    }
+
+    remote.ClearWaypoints();
+    for (int i = 0; i < waypoints.Count; i++)
+        remote.AddWaypoint(waypoints[i], "Mine_" + i);
+
+    remote.FlightMode = FlightMode.OneWay;
+    remote.SetCollisionAvoidance(false);
+    remote.SetDockingMode(false);
+    remote.SetAutoPilotEnabled(true);
+
+    SetDrills(true);
+    lastWaypoint = waypoints[waypoints.Count - 1];
+    jobActive = true;
+
+    Echo("Start Job accepted.");
+    Echo("Waypoints: " + waypoints.Count);
+}
+
+List<Vector3D> BuildSerpentineWaypoints(Vector3D a, Vector3D b, Vector3D upRef, Vector3D forwardRef, double depth, double overlap, double laneWidth)
+{
+    List<Vector3D> points = new List<Vector3D>();
+
+    Vector3D up = upRef;
+    if (up.LengthSquared() < 1e-6) up = Vector3D.Up;
+    up.Normalize();
+
+    Vector3D xAxis = b - a;
+    xAxis -= up * Vector3D.Dot(xAxis, up);
+    if (xAxis.LengthSquared() < 1e-6) return points;
+    xAxis.Normalize();
+
+    Vector3D yAxis = Vector3D.Cross(up, xAxis);
+    if (yAxis.LengthSquared() < 1e-6) return points;
+    yAxis.Normalize();
+
+    Vector3D delta = b - a;
+    double x0 = 0;
+    double y0 = 0;
+    double x1 = Vector3D.Dot(delta, xAxis);
+    double y1 = Vector3D.Dot(delta, yAxis);
+
+    double minX = Math.Min(x0, x1);
+    double maxX = Math.Max(x0, x1);
+    double minY = Math.Min(y0, y1);
+    double maxY = Math.Max(y0, y1);
+
+    double spacing = Math.Max(MIN_LANE_SPACING, laneWidth - overlap);
+
+    Vector3D miningDir = -forwardRef;
+    if (miningDir.LengthSquared() < 1e-6) miningDir = -Vector3D.Forward;
+    miningDir.Normalize();
+
+    // Upper-left in this local frame = minX, maxY
+    bool leftToRight = true;
+    for (double y = maxY; y >= minY; y -= spacing)
+    {
+        double sx = leftToRight ? minX : maxX;
+        double ex = leftToRight ? maxX : minX;
+
+        Vector3D start = a + xAxis * sx + yAxis * y + miningDir * depth;
+        Vector3D end = a + xAxis * ex + yAxis * y + miningDir * depth;
+
+        points.Add(start);
+        points.Add(end);
+        leftToRight = !leftToRight;
+    }
+
+    return points;
+}
+
+bool TryParseStagger(string raw, out Vector3D pos)
+{
+    pos = Vector3D.Zero;
+    if (string.IsNullOrWhiteSpace(raw)) return false;
+
+    string gpsPart = raw;
+    int split = raw.IndexOf('|');
+    if (split >= 0) gpsPart = raw.Substring(0, split);
+
+    return TryParseGPS(gpsPart, out pos);
+}
+
+bool TryGetStaggerOrientationVectors(string raw, out Vector3D forward, out Vector3D up)
+{
+    forward = Vector3D.Forward;
+    up = Vector3D.Up;
+
+    if (string.IsNullOrWhiteSpace(raw)) return false;
+    int split = raw.IndexOf('|');
+    if (split < 0 || split + 1 >= raw.Length) return false;
+
+    string orient = raw.Substring(split + 1).Trim();
+    var parts = orient.Split(',');
+    if (parts.Length < 3) return false;
+
+    double yaw, pitch, roll;
+    if (!double.TryParse(parts[0], out yaw)) return false;
+    if (!double.TryParse(parts[1], out pitch)) return false;
+    if (!double.TryParse(parts[2], out roll)) return false;
+
+    MatrixD m = MatrixD.CreateFromYawPitchRoll(
+        MathHelper.ToRadians((float)yaw),
+        MathHelper.ToRadians((float)pitch),
+        MathHelper.ToRadians((float)roll));
+
+    forward = Vector3D.TransformNormal(Vector3D.Forward, m);
+    up = Vector3D.TransformNormal(Vector3D.Up, m);
+
+    if (forward.LengthSquared() < 1e-6 || up.LengthSquared() < 1e-6) return false;
+    forward.Normalize();
+    up.Normalize();
+    return true;
+}
+
+bool TryParseGPS(string gps, out Vector3D pos)
+{
+    pos = Vector3D.Zero;
+    if (string.IsNullOrWhiteSpace(gps)) return false;
+
+    // Expected: GPS:Name:X:Y:Z:
+    var p = gps.Split(':');
+    if (p.Length < 6) return false;
+
+    double x, y, z;
+    if (!double.TryParse(p[2], out x)) return false;
+    if (!double.TryParse(p[3], out y)) return false;
+    if (!double.TryParse(p[4], out z)) return false;
+
+    pos = new Vector3D(x, y, z);
+    return true;
+}
+
+void SetDrills(bool on)
+{
+    for (int i = 0; i < drills.Count; i++)
+        drills[i].Enabled = on;
+}

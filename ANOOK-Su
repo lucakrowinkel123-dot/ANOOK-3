@@ -66,7 +66,7 @@ public void Main(string argument, UpdateType updateSource) {
     remote = GridTerminalSystem.GetBlockWithName(REMOTE_TAG) as IMyRemoteControl; 
     // Initialize sensor by tag match (supports numbered/variant sensor names)
     var sensors = new List<IMySensorBlock>();
-    GridTerminalSystem.GetBlocksOfType(sensors, s => s.CustomName.IndexOf(SENSOR_TAG, StringComparison.OrdinalIgnoreCase) >= 0);
+    GridTerminalSystem.GetBlocksOfType(sensors, s => s.CustomName.IndexOf(SENSOR_TAG, StringComparison.Ordinal) >= 0);
     sensor = sensors.Count > 0 ? sensors[0] : null;
     soundBlock = GridTerminalSystem.GetBlockWithName(SOUND_BLOCK_NAME) as IMySoundBlock; 
 
@@ -82,7 +82,7 @@ public void Main(string argument, UpdateType updateSource) {
     bool isSendCommand = false; 
 
     // --- NEW 3-STEP SETUP WITH SENSOR VISUALS ---
-    if (cmd.Equals(CMD_SETUP_COMPLETE, StringComparison.OrdinalIgnoreCase)) {
+    if (cmd.Equals(CMD_SETUP_COMPLETE, StringComparison.Ordinal)) {
         if (remote == null) return;
         setupStep++;
         if (setupStep == 1) {
@@ -110,23 +110,23 @@ public void Main(string argument, UpdateType updateSource) {
     }
 
     // --- STANDARD COMMANDS --- 
-    else if (cmd.Equals(CMD_PATH_ADD, StringComparison.OrdinalIgnoreCase)) { commandPrefix = OUT_PATH_ADD; isSendCommand = true; } 
-    else if (cmd.Equals(CMD_STAGGER, StringComparison.OrdinalIgnoreCase)) { 
+    else if (cmd.Equals(CMD_PATH_ADD, StringComparison.Ordinal)) { commandPrefix = OUT_PATH_ADD; isSendCommand = true; } 
+    else if (cmd.Equals(CMD_STAGGER, StringComparison.Ordinal)) { 
         commandPrefix = OUT_STAGGER; isSendCommand = true; 
         if (recordingActive) StopRecordingMode(); 
         ConfigureSensorVisuals(true); // Turn on visuals for stagger alignment
     } 
-    else if (cmd.Equals(CMD_CANCEL, StringComparison.OrdinalIgnoreCase)) { 
+    else if (cmd.Equals(CMD_CANCEL, StringComparison.Ordinal)) { 
         commandPrefix = OUT_CANCEL; isSendCommand = true; 
         if (recordingActive) StopRecordingMode();
         isSoftLocked = false; setupStep = 0; 
         ConfigureSensorVisuals(false); // Clean up visuals
         StopOverrides();
     } 
-    else if (cmd.Equals(CMD_RETURN_REQUEST, StringComparison.OrdinalIgnoreCase)) { commandPrefix = OUT_RETURN_REQUEST; isSendCommand = true; } 
-    else if (cmd.Equals(CMD_MAX_SPEED_REQUEST, StringComparison.OrdinalIgnoreCase)) { commandPrefix = OUT_MAX_SPEED_REQUEST; isSendCommand = true; } 
-    else if (cmd.Equals(CMD_START_RECORDING, StringComparison.OrdinalIgnoreCase)) { StartRecordingMode(); } 
-    else if (cmd.Equals(CMD_STOP_RECORDING, StringComparison.OrdinalIgnoreCase)) { StopRecordingMode(); } 
+    else if (cmd.Equals(CMD_RETURN_REQUEST, StringComparison.Ordinal)) { commandPrefix = OUT_RETURN_REQUEST; isSendCommand = true; } 
+    else if (cmd.Equals(CMD_MAX_SPEED_REQUEST, StringComparison.Ordinal)) { commandPrefix = OUT_MAX_SPEED_REQUEST; isSendCommand = true; } 
+    else if (cmd.Equals(CMD_START_RECORDING, StringComparison.Ordinal)) { StartRecordingMode(); } 
+    else if (cmd.Equals(CMD_STOP_RECORDING, StringComparison.Ordinal)) { StopRecordingMode(); } 
 
     // --- SEND COMMAND --- 
     if (isSendCommand) { 
