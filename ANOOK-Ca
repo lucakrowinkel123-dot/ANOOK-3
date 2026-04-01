@@ -44,8 +44,7 @@ public Program()
 
 public void Main(string argument, UpdateType updateSource)
 {
-    string zoneDbPrefix;
-    RefreshRuntimeBlocks(out zoneDbPrefix);
+    string zoneDbPrefix = RefreshRuntimeBlocks();
     if (remote == null) { Echo("ANOOK-Ca Remote Control not found"); return; }
     if (fieldDatabase == null) { Echo("Field database block not found."); return; }
     if (asteroidDatabases.Count == 0)
@@ -63,7 +62,7 @@ public void Main(string argument, UpdateType updateSource)
 
 
 
-void RefreshRuntimeBlocks(out string zoneDbPrefix)
+string RefreshRuntimeBlocks()
 {
     List<IMyRemoteControl> remotes = new List<IMyRemoteControl>();
     GridTerminalSystem.GetBlocksOfType(remotes, r => r.CustomName.Contains("ANOOK-Ca Remote Control"));
@@ -74,14 +73,14 @@ void RefreshRuntimeBlocks(out string zoneDbPrefix)
     fieldDatabase = fieldBlocks.Count > 0 ? fieldBlocks[0] : null;
 
     string currentZone = (remote != null && fieldDatabase != null) ? GetAsteroidZone(remote.GetPosition()) : "Unknown";
-    zoneDbPrefix = "ANOOK-Ca " + currentZone + " A-DB HD";
-    string zonePrefixFilter = zoneDbPrefix;
+    string zoneDbPrefix = "ANOOK-Ca " + currentZone + " A-DB HD";
 
     asteroidDatabases.Clear();
-    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b => b.CustomName.StartsWith(zonePrefixFilter, StringComparison.Ordinal));
+    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b => b.CustomName.StartsWith(zoneDbPrefix, StringComparison.Ordinal));
     outputLCDs.Clear();
     GridTerminalSystem.GetBlocksOfType(outputLCDs, l => l.CustomName.StartsWith(LCD_TAG));
     outputLCDs.Sort((a, b) => a.CustomName.CompareTo(b.CustomName));
+    return zoneDbPrefix;
 }
 
 bool TryHandleMainCommand(string argument)
