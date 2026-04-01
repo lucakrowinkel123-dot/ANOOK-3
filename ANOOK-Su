@@ -60,87 +60,16 @@ public Program() {
 } 
 
 public void Main(string argument, UpdateType updateSource) { 
-    lcdPath = GridTerminalSystem.GetBlockWithName(LCD_PATH_NAME) as IMyTextPanel; 
-    lcdConfirm = GridTerminalSystem.GetBlockWithName(LCD_CONFIRM_NAME) as IMyTextPanel; 
-    indicatorLight = GridTerminalSystem.GetBlockWithName(INDICATOR_NAME) as IMyLightingBlock; 
-    remote = GridTerminalSystem.GetBlockWithName(REMOTE_TAG) as IMyRemoteControl; 
-    // Initialize sensor by tag match (supports numbered/variant sensor names)
-    var sensors = new List<IMySensorBlock>();
-    GridTerminalSystem.GetBlocksOfType(sensors, s => s.CustomName.IndexOf(SENSOR_TAG, StringComparison.Ordinal) >= 0);
-    sensor = sensors.Count > 0 ? sensors[0] : null;
-    soundBlock = GridTerminalSystem.GetBlockWithName(SOUND_BLOCK_NAME) as IMySoundBlock; 
-
-    if (remote != null && gyroControl == null) {
-        List<IMyGyro> gyros = new List<IMyGyro>();
-        GridTerminalSystem.GetBlocksOfType(gyros);
-        gyroControl = new GyroControl(remote, gyros);
-    }
+    InitializeBlocks();
+    EnsureGyroControl();
 
     double deltaTime = Runtime.TimeSinceLastRun.TotalSeconds; 
     string cmd = (argument ?? "").Trim(); 
-    string commandPrefix = null; 
-    bool isSendCommand = false; 
-
-    // --- NEW 3-STEP SETUP WITH SENSOR VISUALS ---
-    if (cmd.Equals(CMD_SETUP_COMPLETE, StringComparison.Ordinal)) {
-        if (remote == null) return;
-        setupStep++;
-        if (setupStep == 1) {
-            isSoftLocked = true;
-            lockedPos = remote.GetPosition();
-            lockedMatrix = remote.WorldMatrix;
-            ConfigureSensorVisuals(true); // TURN ON VISUAL GUIDE
-            Echo("Step 1: Locked. Visuals On. Go to A.");
-        } else if (setupStep == 2) {
-            setupPos1 = remote.GetPosition();
-            Echo("Step 2: A Set. Go to B.");
-        } else if (setupStep == 3) {
-            setupPos2 = remote.GetPosition();
-            double y, p, r; GetRotationAngles(lockedMatrix.Forward, lockedMatrix.Up, out y, out p, out r);
-            string orient = $"{y:F2},{p:F2},{r:F2}";
-            string gpsA = $"GPS:CornerA:{setupPos1.X:F2}:{setupPos1.Y:F2}:{setupPos1.Z:F2}:";
-            string gpsB = $"GPS:CornerB:{setupPos2.X:F2}:{setupPos2.Y:F2}:{setupPos2.Z:F2}:";
-            string msg = $"ExcavationSiteSetUpComplete|{orient}|{gpsA}|{gpsB}";
-            IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, msg);
-            Echo($"Sent Setup: {msg}");
-            setupStep = 0; isSoftLocked = false; 
-            ConfigureSensorVisuals(false); // TURN OFF VISUAL GUIDE
-            StopOverrides();
-        }
+    string commandMessage;
+    if (TryBuildCommandMessage(cmd, out commandMessage)) {
+        IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, commandMessage);
+        Echo($"Sent: {commandMessage}");
     }
-
-    // --- STANDARD COMMANDS --- 
-    else if (cmd.Equals(CMD_PATH_ADD, StringComparison.Ordinal)) { commandPrefix = OUT_PATH_ADD; isSendCommand = true; } 
-    else if (cmd.Equals(CMD_STAGGER, StringComparison.Ordinal)) { 
-        commandPrefix = OUT_STAGGER; isSendCommand = true; 
-        if (recordingActive) StopRecordingMode(); 
-        ConfigureSensorVisuals(true); // Turn on visuals for stagger alignment
-    } 
-    else if (cmd.Equals(CMD_CANCEL, StringComparison.Ordinal)) { 
-        commandPrefix = OUT_CANCEL; isSendCommand = true; 
-        if (recordingActive) StopRecordingMode();
-        isSoftLocked = false; setupStep = 0; 
-        ConfigureSensorVisuals(false); // Clean up visuals
-        StopOverrides();
-    } 
-    else if (cmd.Equals(CMD_RETURN_REQUEST, StringComparison.Ordinal)) { commandPrefix = OUT_RETURN_REQUEST; isSendCommand = true; } 
-    else if (cmd.Equals(CMD_MAX_SPEED_REQUEST, StringComparison.Ordinal)) { commandPrefix = OUT_MAX_SPEED_REQUEST; isSendCommand = true; } 
-    else if (cmd.Equals(CMD_START_RECORDING, StringComparison.Ordinal)) { StartRecordingMode(); } 
-    else if (cmd.Equals(CMD_STOP_RECORDING, StringComparison.Ordinal)) { StopRecordingMode(); } 
-
-    // --- SEND COMMAND --- 
-    if (isSendCommand) { 
-        string msg; 
-        if (commandPrefix == OUT_PATH_ADD || commandPrefix == OUT_STAGGER) { 
-            if (remote == null) { Echo("No remote found!"); return; } 
-            var pos = remote.GetPosition(); 
-            string gps = $"GPS:Site:{pos.X:F2}:{pos.Y:F2}:{pos.Z:F2}:"; 
-            double yaw, pitch, roll; GetRotationAngles(remote.WorldMatrix.Forward, remote.WorldMatrix.Up, out yaw, out pitch, out roll); 
-            string orient = $"{yaw:F2},{pitch:F2},{roll:F2}"; 
-            msg = $"{commandPrefix}|{gps}|{orient}"; 
-        } else { msg = commandPrefix; } 
-        IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, msg); Echo($"Sent: {msg}"); 
-    } 
 
     // --- IGC LISTENING --- 
     var listeners = new List<IMyBroadcastListener>(); IGC.GetBroadcastListeners(listeners); 
@@ -171,6 +100,119 @@ public void Main(string argument, UpdateType updateSource) {
     } 
     OutputPathStatus(); 
 } 
+
+void InitializeBlocks() {
+    lcdPath = GridTerminalSystem.GetBlockWithName(LCD_PATH_NAME) as IMyTextPanel;
+    lcdConfirm = GridTerminalSystem.GetBlockWithName(LCD_CONFIRM_NAME) as IMyTextPanel;
+    indicatorLight = GridTerminalSystem.GetBlockWithName(INDICATOR_NAME) as IMyLightingBlock;
+    remote = GridTerminalSystem.GetBlockWithName(REMOTE_TAG) as IMyRemoteControl;
+    soundBlock = GridTerminalSystem.GetBlockWithName(SOUND_BLOCK_NAME) as IMySoundBlock;
+
+    var sensors = new List<IMySensorBlock>();
+    GridTerminalSystem.GetBlocksOfType(sensors, s => s.CustomName.IndexOf(SENSOR_TAG, StringComparison.Ordinal) >= 0);
+    sensor = sensors.Count > 0 ? sensors[0] : null;
+}
+
+void EnsureGyroControl() {
+    if (remote == null || gyroControl != null) return;
+    List<IMyGyro> gyros = new List<IMyGyro>();
+    GridTerminalSystem.GetBlocksOfType(gyros);
+    gyroControl = new GyroControl(remote, gyros);
+}
+
+bool TryBuildCommandMessage(string cmd, out string commandMessage) {
+    commandMessage = null;
+
+    if (cmd.Equals(CMD_SETUP_COMPLETE, StringComparison.Ordinal)) {
+        HandleSetupStepCommand();
+        return false;
+    }
+    if (cmd.Equals(CMD_START_RECORDING, StringComparison.Ordinal)) {
+        StartRecordingMode();
+        return false;
+    }
+    if (cmd.Equals(CMD_STOP_RECORDING, StringComparison.Ordinal)) {
+        StopRecordingMode();
+        return false;
+    }
+
+    string commandPrefix = ResolveCommandPrefix(cmd);
+    if (commandPrefix == null) return false;
+
+    if (cmd.Equals(CMD_STAGGER, StringComparison.Ordinal)) {
+        if (recordingActive) StopRecordingMode();
+        ConfigureSensorVisuals(true);
+    } else if (cmd.Equals(CMD_CANCEL, StringComparison.Ordinal)) {
+        if (recordingActive) StopRecordingMode();
+        isSoftLocked = false;
+        setupStep = 0;
+        ConfigureSensorVisuals(false);
+        StopOverrides();
+    }
+
+    if (commandPrefix == OUT_PATH_ADD || commandPrefix == OUT_STAGGER) {
+        if (remote == null) { Echo("No remote found!"); return false; }
+        commandMessage = BuildSitePositionMessage(commandPrefix);
+        return true;
+    }
+
+    commandMessage = commandPrefix;
+    return true;
+}
+
+void HandleSetupStepCommand() {
+    if (remote == null) return;
+    setupStep++;
+
+    if (setupStep == 1) {
+        isSoftLocked = true;
+        lockedPos = remote.GetPosition();
+        lockedMatrix = remote.WorldMatrix;
+        ConfigureSensorVisuals(true);
+        Echo("Step 1: Locked. Visuals On. Go to A.");
+        return;
+    }
+
+    if (setupStep == 2) {
+        setupPos1 = remote.GetPosition();
+        Echo("Step 2: A Set. Go to B.");
+        return;
+    }
+
+    if (setupStep == 3) {
+        setupPos2 = remote.GetPosition();
+        double y, p, r;
+        GetRotationAngles(lockedMatrix.Forward, lockedMatrix.Up, out y, out p, out r);
+        string orient = $"{y:F2},{p:F2},{r:F2}";
+        string gpsA = $"GPS:CornerA:{setupPos1.X:F2}:{setupPos1.Y:F2}:{setupPos1.Z:F2}:";
+        string gpsB = $"GPS:CornerB:{setupPos2.X:F2}:{setupPos2.Y:F2}:{setupPos2.Z:F2}:";
+        string msg = $"ExcavationSiteSetUpComplete|{orient}|{gpsA}|{gpsB}";
+        IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, msg);
+        Echo($"Sent Setup: {msg}");
+        setupStep = 0;
+        isSoftLocked = false;
+        ConfigureSensorVisuals(false);
+        StopOverrides();
+    }
+}
+
+string ResolveCommandPrefix(string cmd) {
+    if (cmd.Equals(CMD_PATH_ADD, StringComparison.Ordinal)) return OUT_PATH_ADD;
+    if (cmd.Equals(CMD_STAGGER, StringComparison.Ordinal)) return OUT_STAGGER;
+    if (cmd.Equals(CMD_CANCEL, StringComparison.Ordinal)) return OUT_CANCEL;
+    if (cmd.Equals(CMD_RETURN_REQUEST, StringComparison.Ordinal)) return OUT_RETURN_REQUEST;
+    if (cmd.Equals(CMD_MAX_SPEED_REQUEST, StringComparison.Ordinal)) return OUT_MAX_SPEED_REQUEST;
+    return null;
+}
+
+string BuildSitePositionMessage(string commandPrefix) {
+    var pos = remote.GetPosition();
+    string gps = $"GPS:Site:{pos.X:F2}:{pos.Y:F2}:{pos.Z:F2}:";
+    double yaw, pitch, roll;
+    GetRotationAngles(remote.WorldMatrix.Forward, remote.WorldMatrix.Up, out yaw, out pitch, out roll);
+    string orient = $"{yaw:F2},{pitch:F2},{roll:F2}";
+    return $"{commandPrefix}|{gps}|{orient}";
+}
 
 // --- SENSOR CONFIGURATION HELPER ---
 void ConfigureSensorVisuals(bool active) {
