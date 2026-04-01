@@ -44,22 +44,8 @@ public Program()
 
 public void Main(string argument, UpdateType updateSource)
 {
-    // --- BLOCK LOOKUPS ---
-    // Find remote control, asteroid databases, and field DB for this zone
-    List<IMyRemoteControl> remotes = new List<IMyRemoteControl>();
-    GridTerminalSystem.GetBlocksOfType(remotes, r => r.CustomName.Contains("ANOOK-Ca Remote Control"));
-    remote = remotes.Count > 0 ? remotes[0] : null;
-    List<IMyTimerBlock> fieldBlocks = new List<IMyTimerBlock>();
-    GridTerminalSystem.GetBlocksOfType(fieldBlocks, b => b.CustomName.IndexOf(FIELD_DB_NAME, StringComparison.Ordinal) >= 0);
-    fieldDatabase = fieldBlocks.Count > 0 ? fieldBlocks[0] : null;
-    string currentZone = (remote != null && fieldDatabase != null) ? GetAsteroidZone(remote.GetPosition()) : "Unknown";
-    asteroidDatabases.Clear();
-    string zoneDbPrefix = "ANOOK-Ca " + currentZone + " A-DB HD";
-    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b => b.CustomName.StartsWith(zoneDbPrefix, StringComparison.Ordinal));
-    outputLCDs.Clear();
-    GridTerminalSystem.GetBlocksOfType(outputLCDs, l => l.CustomName.StartsWith(LCD_TAG));
-    outputLCDs.Sort((a, b) => a.CustomName.CompareTo(b.CustomName));
-    // --- SAFETY CHECKS ---
+    string zoneDbPrefix;
+    RefreshRuntimeBlocks(out zoneDbPrefix);
     if (remote == null) { Echo("ANOOK-Ca Remote Control not found"); return; }
     if (fieldDatabase == null) { Echo("Field database block not found."); return; }
     if (asteroidDatabases.Count == 0)
@@ -70,117 +56,84 @@ public void Main(string argument, UpdateType updateSource)
         return;
     }
 
-    if (argument == null) argument = "";
-    argument = argument.Trim();
+    argument = (argument ?? "").Trim();
+    if (TryHandleMainCommand(argument)) return;
+    HandleIncomingMessages();
+}
 
-    // --- COMMAND HANDLING ---
-    // Each command below matches a programmable block argument or IGC
-    if (argument.Equals(CMD_SEND_CONFIRM, StringComparison.Ordinal))
-    {
-        // Confirm back to pathfinder that a step is complete
-        if (!string.IsNullOrWhiteSpace(lastConfirmedField) && !string.IsNullOrWhiteSpace(lastConfirmedGps) && !string.IsNullOrWhiteSpace(lastConfirmedOrient))
-        {
-            IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, $"{MSG_CONFIRMED_ENTRY}|{lastConfirmedField}|{lastConfirmedGps}|{lastConfirmedOrient}");
-            Echo($"Sent: {MSG_CONFIRMED_ENTRY}|{lastConfirmedField}|{lastConfirmedGps}|{lastConfirmedOrient}");
-        }
-        return;
-    }
 
-    if (argument.Equals(CMD_MAX_SPEED_REQUEST, StringComparison.Ordinal))
-    {
-        // Send max speed setting to pathfinder
-        SendPathfinderMaxSpeed();
-        return;
-    }
 
-    if (argument.Equals(CMD_ASTEROID_SETUP_CANCEL, StringComparison.Ordinal))
-    {
-        // Cancel asteroid setup (deletes in-progress entry)
-        CancelAsteroidEntry();
-        return;
-    }
+void RefreshRuntimeBlocks(out string zoneDbPrefix)
+{
+    List<IMyRemoteControl> remotes = new List<IMyRemoteControl>();
+    GridTerminalSystem.GetBlocksOfType(remotes, r => r.CustomName.Contains("ANOOK-Ca Remote Control"));
+    remote = remotes.Count > 0 ? remotes[0] : null;
+
+    List<IMyTimerBlock> fieldBlocks = new List<IMyTimerBlock>();
+    GridTerminalSystem.GetBlocksOfType(fieldBlocks, b => b.CustomName.IndexOf(FIELD_DB_NAME, StringComparison.Ordinal) >= 0);
+    fieldDatabase = fieldBlocks.Count > 0 ? fieldBlocks[0] : null;
+
+    string currentZone = (remote != null && fieldDatabase != null) ? GetAsteroidZone(remote.GetPosition()) : "Unknown";
+    zoneDbPrefix = "ANOOK-Ca " + currentZone + " A-DB HD";
+
+    asteroidDatabases.Clear();
+    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b => b.CustomName.StartsWith(zoneDbPrefix, StringComparison.Ordinal));
+    outputLCDs.Clear();
+    GridTerminalSystem.GetBlocksOfType(outputLCDs, l => l.CustomName.StartsWith(LCD_TAG));
+    outputLCDs.Sort((a, b) => a.CustomName.CompareTo(b.CustomName));
+}
+
+bool TryHandleMainCommand(string argument)
+{
+    if (argument.Equals(CMD_SEND_CONFIRM, StringComparison.Ordinal)) { SendConfirmIfAvailable(); return true; }
+    if (argument.Equals(CMD_MAX_SPEED_REQUEST, StringComparison.Ordinal)) { SendPathfinderMaxSpeed(); return true; }
+    if (argument.Equals(CMD_ASTEROID_SETUP_CANCEL, StringComparison.Ordinal)) { CancelAsteroidEntry(); return true; }
     if (argument.Equals(CMD_ASTEROID_SETUP_START, StringComparison.Ordinal))
     {
-        // Begin new asteroid setup, block if one is in progress
-        if (IsAnyAsteroidInSetup()) {
-            Echo("Another asteroid is already in setup."); return;
-        }
+        if (IsAnyAsteroidInSetup()) { Echo("Another asteroid is already in setup."); return true; }
         BeginAsteroidSetup();
         RunAutoExcavationSiteEntry();
-        return;
+        return true;
     }
-    else if (argument.Equals(CMD_EXCAVATION_SITE_NEXT_PATH, StringComparison.Ordinal))
-    {
-        // Advance to next site slot, auto-enter
-        currentSiteN++; 
-        RunAutoExcavationSiteEntry();
-        return;
-    }
-    else if (argument.Equals(CMD_EXCAVATION_SITE_CANCEL, StringComparison.Ordinal))
-    {
-        // Cancel last excavation site (removes last site entry/paths/stagger)
-        CancelLastExcavationSiteEntry();
-        return;
-    }
-    else if (argument.Equals(CMD_ASTEROID_SETUP_COMPLETE, StringComparison.Ordinal))
-    {
-        // Complete asteroid setup (sets status to pending)
-        CompleteAsteroidEntry();
-        return;
-    }
-    else if (argument.Equals(CMD_PATHFINDER_RETURN_REQUEST, StringComparison.Ordinal))
-    {
-        // Send return path (as Path|gps|orient|close|... )
-        SendReturnPath();
-        return;
-    }
-    else if (argument.StartsWith(CMD_SET_EXCLUSION_ZONE, StringComparison.Ordinal))
-    {
-        // Set exclusion zone radius for current asteroid setup
-        string[] parts = argument.Split('=');
-        int radius;
-        if (parts.Length == 2 && int.TryParse(parts[1], out radius))
-            SetFieldOnCurrent("ExclusionZone", radius.ToString());
-        else Echo("Invalid exclusion zone format.");
-        return;
-    }
-    else if (argument.StartsWith(CMD_ORE, StringComparison.Ordinal))
-    {
-        // Add one or more ore types, comma-separated (e.g. "OreIron,Nickel")
-        string ores = argument.Substring(3);
-        var oreList = ores.Split(new char[] {','}, StringSplitOptions.RemoveEmptyEntries);
-        foreach (var ore in oreList)
-            AddOre(ore.Trim());
-        return;
-    }
-    // Excavation Site setup workflow commands
-    else if (argument.StartsWith(CMD_EXCAVATION_SITE_ENTRY, StringComparison.Ordinal))
-    {
-        // Save excavation entry point (gps|orient)
-        SaveExcavationSiteEntry(argument);
-        return;
-    }
-    else if (argument.StartsWith(CMD_EXCAVATION_SITE_PATH_ADD, StringComparison.Ordinal))
-    {
-        // Save a path point (gps|orient)
-        SaveExcavationSitePath(argument);
-        return;
-    }
-    else if (argument.StartsWith(CMD_EXCAVATION_SITE_STAGGER, StringComparison.Ordinal))
-    {
-        // Save a stagger point (gps|orient)
-        SaveExcavationSiteStagger(argument);
-        return;
-    }
-    else if (argument.StartsWith(CMD_EXCAVATION_SITE_SETUP_COMPLETE, StringComparison.Ordinal))
-    {
-        // Save completed excavation site in new format: orientation|cornerA|cornerB
-        SaveExcavationSite(argument);
-        return;
-    }
+    if (argument.Equals(CMD_EXCAVATION_SITE_NEXT_PATH, StringComparison.Ordinal)) { currentSiteN++; RunAutoExcavationSiteEntry(); return true; }
+    if (argument.Equals(CMD_EXCAVATION_SITE_CANCEL, StringComparison.Ordinal)) { CancelLastExcavationSiteEntry(); return true; }
+    if (argument.Equals(CMD_ASTEROID_SETUP_COMPLETE, StringComparison.Ordinal)) { CompleteAsteroidEntry(); return true; }
+    if (argument.Equals(CMD_PATHFINDER_RETURN_REQUEST, StringComparison.Ordinal)) { SendReturnPath(); return true; }
+    if (argument.StartsWith(CMD_SET_EXCLUSION_ZONE, StringComparison.Ordinal)) { HandleExclusionZoneCommand(argument); return true; }
+    if (argument.StartsWith(CMD_ORE, StringComparison.Ordinal)) { HandleOreCommand(argument); return true; }
+    if (argument.StartsWith(CMD_EXCAVATION_SITE_ENTRY, StringComparison.Ordinal)) { SaveExcavationSiteEntry(argument); return true; }
+    if (argument.StartsWith(CMD_EXCAVATION_SITE_PATH_ADD, StringComparison.Ordinal)) { SaveExcavationSitePath(argument); return true; }
+    if (argument.StartsWith(CMD_EXCAVATION_SITE_STAGGER, StringComparison.Ordinal)) { SaveExcavationSiteStagger(argument); return true; }
+    if (argument.StartsWith(CMD_EXCAVATION_SITE_SETUP_COMPLETE, StringComparison.Ordinal)) { SaveExcavationSite(argument); return true; }
+    return false;
+}
 
-    // --- IGC HANDLER ---
-    // Handles any incoming IGC messages from pathfinder or others
+void SendConfirmIfAvailable()
+{
+    if (!string.IsNullOrWhiteSpace(lastConfirmedField) && !string.IsNullOrWhiteSpace(lastConfirmedGps) && !string.IsNullOrWhiteSpace(lastConfirmedOrient))
+    {
+        IGC.SendBroadcastMessage(PATHFINDER_CHANNEL, $"{MSG_CONFIRMED_ENTRY}|{lastConfirmedField}|{lastConfirmedGps}|{lastConfirmedOrient}");
+        Echo($"Sent: {MSG_CONFIRMED_ENTRY}|{lastConfirmedField}|{lastConfirmedGps}|{lastConfirmedOrient}");
+    }
+}
+
+void HandleExclusionZoneCommand(string argument)
+{
+    string[] parts = argument.Split('=');
+    int radius;
+    if (parts.Length == 2 && int.TryParse(parts[1], out radius)) SetFieldOnCurrent("ExclusionZone", radius.ToString());
+    else Echo("Invalid exclusion zone format.");
+}
+
+void HandleOreCommand(string argument)
+{
+    string ores = argument.Substring(3);
+    var oreList = ores.Split(new char[] {','}, StringSplitOptions.RemoveEmptyEntries);
+    foreach (var ore in oreList) AddOre(ore.Trim());
+}
+
+void HandleIncomingMessages()
+{
     List<IMyBroadcastListener> listeners = new List<IMyBroadcastListener>();
     IGC.GetBroadcastListeners(listeners);
     for (int i = 0; i < listeners.Count; i++)
@@ -189,12 +142,8 @@ public void Main(string argument, UpdateType updateSource)
         while (listener.HasPendingMessage)
         {
             MyIGCMessage msg = listener.AcceptMessage();
-            string s = null;
             if (listener.Tag == PATHFINDER_CHANNEL && msg.Data is string)
-            {
-                s = (string)msg.Data;
-                ProcessPathfinderMessage(s);
-            }
+                ProcessPathfinderMessage((string)msg.Data);
         }
     }
 }
