@@ -34,8 +34,7 @@ public Program()
 
 public void Main(string argument, UpdateType updateSource)
 {
-    remote = GridTerminalSystem.GetBlockWithName("ANOOK-PF Remote Control") as IMyRemoteControl;
-    GridTerminalSystem.GetBlocksOfType(drills);
+    InitializeRuntimeBlocks();
 
     string cmd = (argument ?? "").Trim();
     if (cmd.Equals(CMD_START_JOB, StringComparison.Ordinal))
@@ -44,20 +43,30 @@ public void Main(string argument, UpdateType updateSource)
         return;
     }
 
-    if (jobActive && remote != null)
+    UpdateJobProgress();
+}
+
+void InitializeRuntimeBlocks()
+{
+    remote = GridTerminalSystem.GetBlockWithName("ANOOK-PF Remote Control") as IMyRemoteControl;
+    GridTerminalSystem.GetBlocksOfType(drills);
+}
+
+void UpdateJobProgress()
+{
+    if (!jobActive || remote == null) return;
+
+    double d = Vector3D.Distance(remote.GetPosition(), lastWaypoint);
+    if (d <= closeEnough)
     {
-        double d = Vector3D.Distance(remote.GetPosition(), lastWaypoint);
-        if (d <= closeEnough)
-        {
-            remote.SetAutoPilotEnabled(false);
-            SetDrills(false);
-            jobActive = false;
-            Echo("Job complete.");
-        }
-        else
-        {
-            Echo("Mining... Dist to end: " + d.ToString("0.0"));
-        }
+        remote.SetAutoPilotEnabled(false);
+        SetDrills(false);
+        jobActive = false;
+        Echo("Job complete.");
+    }
+    else
+    {
+        Echo("Mining... Dist to end: " + d.ToString("0.0"));
     }
 }
 
