@@ -75,9 +75,10 @@ void RefreshRuntimeBlocks(out string zoneDbPrefix)
 
     string currentZone = (remote != null && fieldDatabase != null) ? GetAsteroidZone(remote.GetPosition()) : "Unknown";
     zoneDbPrefix = "ANOOK-Ca " + currentZone + " A-DB HD";
+    string zonePrefixFilter = zoneDbPrefix;
 
     asteroidDatabases.Clear();
-    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b => b.CustomName.StartsWith(zoneDbPrefix, StringComparison.Ordinal));
+    GridTerminalSystem.GetBlocksOfType(asteroidDatabases, b => b.CustomName.StartsWith(zonePrefixFilter, StringComparison.Ordinal));
     outputLCDs.Clear();
     GridTerminalSystem.GetBlocksOfType(outputLCDs, l => l.CustomName.StartsWith(LCD_TAG));
     outputLCDs.Sort((a, b) => a.CustomName.CompareTo(b.CustomName));
